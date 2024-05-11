@@ -9,9 +9,9 @@ The addon makes use of the Blender specific rigidbody system in the Physics tab 
 | ------------- | ------------- | ------------- | 
 | Type | Active → Dynamic, Passive → Static | Active → RigidBody3D, Passive → StaticBody3D |
 | Mass (Active Only)  | mass | mass |
-| Dynamic (Active Only) | ☑ Dynamic ☐ Static | (Type is Active) → ☑ RigidBody3D ☐ StaticBody3D |
-| Animated (Active Only) | ☑ Kinematic | ☑ AnimatableBody3D ☐ RigidBody3D |
-| Shape | Box, Sphere, Capsule, Cylinder, Convex Hull, Mesh | same |
+| Dynamic (Active Only) | ☑ Dynamic <br> ☐ Static | ☑ RigidBody3D <br> ☐ StaticBody3D |
+| Animated (Active Only) | ☑ Kinematic <br> ☐ Dynamic | ☑ AnimatableBody3D <br> ☐ RigidBody3D |
+| Shape | Box <br> Sphere <br> Capsule <br> Cylinder <br> Convex Hull <br> Mesh | BoxShape3D <br> SphereShape3D <br> CapsuleShape3D <br> CylinderShape3D <br> ConvexPolygonShape3D <br> ConcavePolygonShape3D |
 
 
 #### Compound Shapes
