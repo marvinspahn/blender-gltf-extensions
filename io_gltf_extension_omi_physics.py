@@ -105,7 +105,11 @@ class glTF2ExportUserExtension:
         physics_body_type = "collider"
         mass = 0
         motion_type = ""
-        if blender_object.rigid_body.type == 'ACTIVE':
+        is_compound = False
+        if blender_object.parent:
+            collision_shape = blender_object.parent.rigid_body.collision_shape
+            is_compound = collision_shape == 'COMPOUND'
+        if blender_object.rigid_body.type == 'ACTIVE' and not is_compound:
             physics_body_type = "motion"
             mass = blender_object.rigid_body.mass
             motion_type = "dynamic"
