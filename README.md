@@ -15,7 +15,7 @@ The addon makes use of the Blender specific rigidbody system in the Physics tab 
 
 
 #### Compound Shapes
-The extension supports compound shapes which are multiple shapes under one physics body. Select `Compound Parent` for the rigidbody collision shape and parent multiple other **passive** rigidbody objects under the physics body.
+The extension supports compound shapes which are multiple shapes under one physics body. Select `Compound Parent` for the rigidbody collision shape and parent multiple other rigidbody objects under the physics body.
 > [!NOTE]
 > Even though blender hides certain settings when using compound shapes (eg. when parenting a compound parent shape rigidbody to another one) they are still being read by the addon and necessary to be set before parenting child rigidbodies to the compound parent.
 #### Instanced Shapes
