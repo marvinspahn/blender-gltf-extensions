@@ -281,7 +281,7 @@ class glTF2ExportUserExtension:
             extension_payload = {
                 "shape": shape_index
             }
-            
+
         gltf2_node.extensions["OMI_physics_body"] = self.Extension(
             name="OMI_physics_body",
             extension={physics_body_type: extension_payload},
