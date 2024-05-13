@@ -7,7 +7,7 @@ bl_info = {
     "name": "glTF Export OMI Physics Extension",
     "description": "Add Rigidbody physics as extension in glTF 2.0 after the OMI specification.",  # noqa
     "author": "Marvin Spahn",
-    "version": (1, 0),
+    "version": (1, 1),
     "blender": (4, 0, 0),
     "location": "File > Export > glTF 2.0",
     "doc_url": "https://github.com/marvinspahn/blender-gltf-extensions",
@@ -19,8 +19,14 @@ extension_is_required = False
 
 class GLTFPhysicsExtensionProperties(bpy.types.PropertyGroup):
     enabled: bpy.props.BoolProperty(
-        name=bl_info["name"],  # noqa: F821
+        name='OMI Physics Extension',  # noqa: F722, F821
         description='Include this extension in the exported glTF file',  # noqa: F722, E501
+        default=True
+    )
+
+    use_collider_method: bpy.props.BoolProperty(
+        name='Use old collider method',  # noqa: F722
+        description='Use the deprecated collider extension naming (eg. for Godot 4.2 and lower)',  # noqa: F722, E501
         default=True
     )
 
@@ -38,6 +44,7 @@ class GLTFPhysicsExtensionAddonPreferences(bpy.types.AddonPreferences):
         props = bpy.context.scene.GLTFPhysicsExtensionProperties
         layout = self.layout
         layout.use_property_split = True
+        layout.prop(props, 'use_collider_method')
         layout.prop(props, 'trigger_prop_name')
 
 
@@ -55,7 +62,7 @@ class GLTF_PT_UserExtensionPhysicsPanel(bpy.types.Panel):
         return operator.bl_idname == "EXPORT_SCENE_OT_gltf"
 
     def draw_header(self, context):
-        props = bpy.context.scene.PhysicsExtensionProperties
+        props = bpy.context.scene.GLTFPhysicsExtensionProperties
         self.layout.prop(props, 'enabled')
 
     def draw(self, context):
@@ -63,10 +70,11 @@ class GLTF_PT_UserExtensionPhysicsPanel(bpy.types.Panel):
         layout.use_property_split = True
         layout.use_property_decorate = False  # No animation
 
-        props = bpy.context.scene.PhysicsExtensionProperties
+        props = bpy.context.scene.GLTFPhysicsExtensionProperties
         layout.active = props.enabled
 
-        layout.prop(props, "trigger_prop_name", text="Trigger property name")
+        layout.prop(props, 'trigger_prop_name')
+        layout.prop(props, 'use_collider_method')
 
 
 class glTF2ExportUserExtension:
@@ -80,28 +88,93 @@ class glTF2ExportUserExtension:
     def __init__(self):
         from io_scene_gltf2.io.com.gltf2_io_extensions import Extension
         self.Extension = Extension
-        self.props = bpy.context.scene.PhysicsExtensionProperties
+        self.props = bpy.context.scene.GLTFPhysicsExtensionProperties
         self.collision_shapes = []
         # save unique names in dictionary to reuse meshes with the same shape
         self.mesh_ref_dict = {}
-        self.extension_payload = {}
 
-    def gather_gltf_extensions_hook(self, gltf2_plan, export_settings):
-        if not self.props.enabled:
-            return
-        gltf2_plan.extensions["OMI_physics_shape"] = self.Extension(
-            name="OMI_physics_shape",
-            extension={"shapes": self.collision_shapes},
-            required=False
+    def create_collider(self, gltf2_node, blender_object):
+        shape_index = len(self.collision_shapes)
+        should_create_new_collider = True
+        shape = blender_object.rigid_body.collision_shape
+        data_name = blender_object.data.name
+        if data_name not in self.mesh_ref_dict:
+            self.mesh_ref_dict[data_name] = {
+                shape: shape_index
+            }
+        elif shape in self.mesh_ref_dict[data_name]:
+            if (("isTrigger" in self.collision_shapes[
+                    self.mesh_ref_dict[data_name][shape]])
+                    == (self.props.trigger_prop_name in blender_object)):
+                shape_index = self.mesh_ref_dict[data_name][shape]
+                should_create_new_collider = False
+                print("trigger")
+            else:
+                self.mesh_ref_dict[data_name][shape] = shape_index
+        else:
+            self.mesh_ref_dict[data_name][shape] = shape_index
+
+        if should_create_new_collider:
+            match blender_object.rigid_body.collision_shape:
+                case 'BOX':
+                    self.collision_shapes.append({
+                        "type": "box",
+                        "size": [
+                            # convert size to OpenGl coordinate system
+                            blender_object.dimensions[0],
+                            blender_object.dimensions[2],
+                            blender_object.dimensions[1]]
+                    })
+                case 'SPHERE':
+                    self.collision_shapes.append({
+                        "type": "sphere",
+                        "radius": max(blender_object.dimensions) / 2
+                    })
+                case 'CYLINDER':
+                    self.collision_shapes.append({
+                        "type": "cylinder",
+                        "height": blender_object.dimensions[2],
+                        "radius": max([
+                            blender_object.dimensions[0],
+                            blender_object.dimensions[1]]) / 2
+                    })
+                case 'CAPSULE':
+                    self.collision_shapes.append({
+                        "type": "capsule",
+                        "height": blender_object.dimensions[2],
+                        "radius": max([
+                            blender_object.dimensions[0],
+                            blender_object.dimensions[1]]) / 2
+                    })
+                case 'MESH':
+                    self.collision_shapes.append({
+                        "type": "trimesh",
+                        "mesh": gltf2_node.mesh
+                    })
+                case 'CONVEX_HULL':
+                    self.collision_shapes.append({
+                        "type": "hull",
+                        "mesh": gltf2_node.mesh
+                    })
+                case 'COMPOUND':
+                    gltf2_node.extensions["OMI_physics_body"] = self.Extension(
+                        name="OMI_physics_body",
+                        extension={"collider": {}},
+                        required=extension_is_required
+                    )
+                    return
+
+        if self.props.trigger_prop_name in blender_object:
+            self.collision_shapes[shape_index]["isTrigger"] = True
+
+        gltf2_node.extensions["OMI_collider"] = self.Extension(
+            name="OMI_collider",
+            extension={"collider": shape_index},
+            required=extension_is_required
         )
 
-    def gather_node_hook(self, gltf2_node, blender_object, export_settings):
-        if not self.props.enabled:
-            return
-
-        if not blender_object.rigid_body:
-            return
-
+    def create_physics_bodies(self, gltf2_node, blender_object):
+        extension_payload = {}
         physics_body_type = "collider"
         mass = 0
         motion_type = ""
@@ -117,13 +190,13 @@ class glTF2ExportUserExtension:
                 motion_type = "kinematic"
             if not blender_object.rigid_body.enabled:
                 motion_type = "static"
-                self.extension_payload = {
-                    "type": motion_type,
-                    "mass": mass
-                }
+            extension_payload = {
+                "type": motion_type,
+                "mass": mass
+            }
             gltf2_node.extensions["OMI_physics_body"] = self.Extension(
                 name="OMI_physics_body",
-                extension={physics_body_type: self.extension_payload},
+                extension={physics_body_type: extension_payload},
                 required=extension_is_required
             )
             return
@@ -131,20 +204,22 @@ class glTF2ExportUserExtension:
         if self.props.trigger_prop_name in blender_object:
             physics_body_type = "trigger"
             if blender_object[self.props.trigger_prop_name] is True:
-                self.extension_payload = {
+                extension_payload = {
                     "node": []
                 }
         shape_index = len(self.collision_shapes)
         should_create_new_shape = True
-        if blender_object.data.name not in self.mesh_ref_dict:
-            self.mesh_ref_dict[blender_object.data.name] = [
-                shape_index,
-                blender_object.rigid_body.collision_shape
-            ]
-        elif (self.mesh_ref_dict[blender_object.data.name][1]
-                == blender_object.rigid_body.collision_shape):
-            shape_index = self.mesh_ref_dict[blender_object.data.name][0]
+        shape = blender_object.rigid_body.collision_shape
+        data_name = blender_object.data.name
+        if data_name not in self.mesh_ref_dict:
+            self.mesh_ref_dict[data_name] = {
+                shape: shape_index
+            }
+        elif shape in self.mesh_ref_dict[data_name]:
+            shape_index = self.mesh_ref_dict[data_name][shape]
             should_create_new_shape = False
+        else:
+            self.mesh_ref_dict[data_name][shape] = shape_index
 
         if should_create_new_shape:
             match blender_object.rigid_body.collision_shape:
@@ -201,18 +276,46 @@ class glTF2ExportUserExtension:
                         }
                     })
                 case 'COMPOUND':
-                    self.extension_payload = {"shape": {}}
-
-        if not self.extension_payload:
-            self.extension_payload = {
+                    extension_payload = {"shape": {}}
+        if not extension_payload:
+            extension_payload = {
                 "shape": shape_index
             }
-
+            
         gltf2_node.extensions["OMI_physics_body"] = self.Extension(
             name="OMI_physics_body",
-            extension={physics_body_type: self.extension_payload},
+            extension={physics_body_type: extension_payload},
             required=extension_is_required
         )
+
+    def gather_gltf_extensions_hook(self, gltf2_plan, export_settings):
+        if not self.props.enabled:
+            return
+        if self.props.use_collider_method:
+            gltf2_plan.extensions["OMI_collider"] = self.Extension(
+                name="OMI_collider",
+                extension={"colliders": self.collision_shapes},
+                required=False
+            )
+            return
+
+        gltf2_plan.extensions["OMI_physics_shape"] = self.Extension(
+            name="OMI_physics_shape",
+            extension={"shapes": self.collision_shapes},
+            required=False
+        )
+
+    def gather_node_hook(self, gltf2_node, blender_object, export_settings):
+        if not self.props.enabled:
+            return
+
+        if not blender_object.rigid_body:
+            return
+
+        if self.props.use_collider_method:
+            self.create_collider(gltf2_node, blender_object)
+        else:
+            self.create_physics_bodies(gltf2_node, blender_object)
 
 
 def register():
@@ -241,4 +344,4 @@ def unregister():
     unregister_panel()
     bpy.utils.unregister_class(GLTFPhysicsExtensionProperties)
     bpy.utils.unregister_class(GLTFPhysicsExtensionAddonPreferences)
-    del bpy.types.Scene.PhysicsExtensionProperties
+    del bpy.types.Scene.GLTFPhysicsExtensionProperties
