@@ -3,23 +3,26 @@
 
 import bpy
 
+
 bl_info = {
     "name": "glTF Export OMI Physics Extension",
     "description": "Add Rigidbody physics as extension in glTF 2.0 after the OMI specification.",  # noqa
     "author": "Marvin Spahn",
-    "version": (1, 1),
-    "blender": (4, 0, 0),
+    "version": (1, 2),
+    "blender": (4, 3, 0),
     "location": "File > Export > glTF 2.0",
     "doc_url": "https://github.com/marvinspahn/blender-gltf-extensions",
     "category": "Import-Export"
 }
 
+
+glTF_extension_name = "EXT_omi_physics"
 extension_is_required = False
 
 
 class GLTFPhysicsExtensionProperties(bpy.types.PropertyGroup):
     enabled: bpy.props.BoolProperty(
-        name='OMI Physics Extension',  # noqa: F722, F821
+        name="OMI Physics Extension",  # noqa: F722, F821
         description='Include this extension in the exported glTF file',  # noqa: F722, E501
         default=True
     )
@@ -27,7 +30,7 @@ class GLTFPhysicsExtensionProperties(bpy.types.PropertyGroup):
     use_collider_method: bpy.props.BoolProperty(
         name='Use old collider method',  # noqa: F722
         description='Use the deprecated collider extension naming (eg. for Godot 4.2 and lower)',  # noqa: F722, E501
-        default=True
+        default=False
     )
 
     trigger_prop_name: bpy.props.StringProperty(
@@ -48,33 +51,59 @@ class GLTFPhysicsExtensionAddonPreferences(bpy.types.AddonPreferences):
         layout.prop(props, 'trigger_prop_name')
 
 
-class GLTF_PT_UserExtensionPhysicsPanel(bpy.types.Panel):
-    bl_space_type = 'FILE_BROWSER'
-    bl_region_type = 'TOOL_PROPS'
-    bl_label = ''
-    bl_parent_id = 'GLTF_PT_export_user_extensions'
-    bl_options = {'DEFAULT_CLOSED'}
+# TODO make rigidbody setup easier with setup operators
+class GLTF_OT_OMIRigidbodySetupOperator(bpy.types.Operator):
+    bl_label = "OMI Physics Setup Rigidbody"
+    bl_idname = "omi_physics.setup_rigidbody"
+
+    def execute(self, context):
+        return {'FINISHED'}
+
+
+class GLTF_OT_OMITriggerPropertyOperator(bpy.types.Operator):
+    """Creates a custom trigger property on the current object."""
+    bl_label = "OMI Physics Toggle Trigger Property"
+    bl_idname = "omi_physics.toggle_trigger_prop"
+    bl_description = "Toggle to convert the rigidbody to a trigger volume during export"  # noqa
+
+    def execute(self, context):
+        props = context.scene.GLTFPhysicsExtensionProperties
+        obj = context.object
+        if props.trigger_prop_name in obj:
+            del obj[props.trigger_prop_name]
+        else:
+            obj[props.trigger_prop_name] = True
+        return {'FINISHED'}
+
+
+class GLTF_PT_OMIPhysicsPanel(bpy.types.Panel):
+    """
+    Creates a panel in the physics properties
+    window for additional settings and setups.
+    """
+    bl_label = "OMI Physics"
+    bl_idname = "PHYSICS_PT_OMIPhysics"
+    bl_space_type = 'PROPERTIES'
+    bl_region_type = 'WINDOW'
+    bl_context = "physics"
 
     @classmethod
     def poll(cls, context):
-        sfile = context.space_data
-        operator = sfile.active_operator
-        return operator.bl_idname == "EXPORT_SCENE_OT_gltf"
-
-    def draw_header(self, context):
-        props = bpy.context.scene.GLTFPhysicsExtensionProperties
-        self.layout.prop(props, 'enabled')
+        return context.object.rigid_body
 
     def draw(self, context):
         layout = self.layout
-        layout.use_property_split = True
-        layout.use_property_decorate = False  # No animation
-
-        props = bpy.context.scene.GLTFPhysicsExtensionProperties
-        layout.active = props.enabled
-
-        layout.prop(props, 'trigger_prop_name')
-        layout.prop(props, 'use_collider_method')
+        obj = context.object
+        props = context.scene.GLTFPhysicsExtensionProperties
+        row = layout.row()
+        if props.trigger_prop_name not in obj:
+            row.operator("omi_physics.toggle_trigger_prop",
+                         text="Trigger Disabled",
+                         icon='HIDE_ON')
+        else:
+            row.operator("omi_physics.toggle_trigger_prop",
+                         text="Trigger Enabled",
+                         icon='HIDE_OFF')
 
 
 class glTF2ExportUserExtension:
@@ -182,7 +211,7 @@ class glTF2ExportUserExtension:
         if blender_object.parent:
             collision_shape = blender_object.parent.rigid_body.collision_shape
             is_compound = collision_shape == 'COMPOUND'
-        if blender_object.rigid_body.type == 'ACTIVE' and not is_compound:
+        if blender_object.rigid_body.type == 'ACTIVE' or is_compound:
             physics_body_type = "motion"
             mass = blender_object.rigid_body.mass
             motion_type = "dynamic"
@@ -203,10 +232,6 @@ class glTF2ExportUserExtension:
 
         if self.props.trigger_prop_name in blender_object:
             physics_body_type = "trigger"
-            if blender_object[self.props.trigger_prop_name] is True:
-                extension_payload = {
-                    "node": []
-                }
         shape_index = len(self.collision_shapes)
         should_create_new_shape = True
         shape = blender_object.rigid_body.collision_shape
@@ -321,27 +346,24 @@ class glTF2ExportUserExtension:
 def register():
     bpy.utils.register_class(GLTFPhysicsExtensionProperties)
     bpy.utils.register_class(GLTFPhysicsExtensionAddonPreferences)
+    bpy.utils.register_class(GLTF_OT_OMIRigidbodySetupOperator)
+    bpy.utils.register_class(GLTF_OT_OMITriggerPropertyOperator)
+    bpy.utils.register_class(GLTF_PT_OMIPhysicsPanel)
     props = bpy.props.PointerProperty(type=GLTFPhysicsExtensionProperties)
     bpy.types.Scene.GLTFPhysicsExtensionProperties = props
 
 
-def register_panel():
-    try:
-        bpy.utils.register_class(GLTF_PT_UserExtensionPhysicsPanel)
-    except Exception:
-        pass
-    return unregister_panel
-
-
-def unregister_panel():
-    try:
-        bpy.utils.unregister_class(GLTF_PT_UserExtensionPhysicsPanel)
-    except Exception:
-        pass
-
-
 def unregister():
-    unregister_panel()
     bpy.utils.unregister_class(GLTFPhysicsExtensionProperties)
     bpy.utils.unregister_class(GLTFPhysicsExtensionAddonPreferences)
+    bpy.utils.unregister_class(GLTF_OT_OMIRigidbodySetupOperator)
+    bpy.utils.unregister_class(GLTF_OT_OMITriggerPropertyOperator)
+    bpy.utils.unregister_class(GLTF_PT_OMIPhysicsPanel)
     del bpy.types.Scene.GLTFPhysicsExtensionProperties
+
+
+def draw_export(context, layout):
+    row = layout.row()
+    row.use_property_split = False
+    props = bpy.context.scene.GLTFPhysicsExtensionProperties
+    row.prop(props, "enabled")
